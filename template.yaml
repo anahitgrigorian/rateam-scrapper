@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  ImageTag:
+    Type: String
+  BucketName:
+    Type: String
+
+Resources:
+  RateAMFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: RateAMFunctionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RateAMS3WritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub "arn:aws:s3:::${BucketName}/*"
+
+  RateAMEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: RateAMEventBridgeRule
+      ScheduleExpression: "rate(6 hours)"
+      Targets:
+        - Arn: !GetAtt RateAMScrapper.Arn
+          Id: RateAMScrapper
+
+  RateAMScrapper:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Role: !GetAtt RateAMFunctionRole.Arn
+      Environment:
+        Variables:
+          RATES_BUCKET: !Ref BucketName
+      Timeout: 30
+    Metadata:
+      Dockerfile: Dockerfile 
+      DockerContext: . 
+      DockerTag: !Ref ImageTag
+          
+          
+

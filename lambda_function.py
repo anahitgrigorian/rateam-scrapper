@@ -1,52 +1,95 @@
-from scrapy import Selector
-import urllib3
-
+import requests
+from bs4 import BeautifulSoup
 import pandas as pd
+import numpy as np
 from datetime import datetime
-import io
+import boto3
+from io import StringIO
+import os
 
+# Function to convert text to float or np.nan
+def convert_to_float(value):
+    return float(value.strip()) if value.strip() else np.nan
 
-def foo(event,context):
-    http = urllib3.PoolManager()
-    r = http.request('GET', 'https://rates.am')
-    sel = Selector(text=r.data)
-    rows = sel.xpath('//*[@id="rb"]//tr[@id[not(.="")]]')
-    csv = 'bank,date,usd_sell,usd_buy,eur_sell,eur_buy,rub_sell,rub_buy,gbp_sell,gbp_buy\n'
-    date_map = {
-        'Հուն': '01',
-        'Փետ': '02',
-        'Մար': '03',
-        'Ապր': '04',
-        'Մայ': '05',
-        'Հնս': '06',
-        'Հլս': '07',
-        'Օգս': '08',
-        'Սեպ': '09',
-        'Հոկ': '10',
-        'Նոյ': '11',
-        'Դեկ': '12',
-    }
-    today = datetime.today()
+# Function to parse and convert date string
+def parse_and_convert_date(date_str):
+    date_str += ", {0}".format(datetime.now().year)
+    parsed_date = datetime.strptime(date_str, '%d %b, %H:%M, %Y')
+    return parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+
+# Function to generate S3 key
+def generate_s3_key():
+    date = datetime.now()
+    return "{0}/{1}/{2}/{3}.csv".format(date.year, date.month, date.day, date.strftime('%H-%M-%S'))
+
+def lambda_handler(event,context):
+    # Set the URL
+    url = "https://rate.am/en/"
+    response = requests.get(url)
+
+    # Parse the HTML content
+    soup = BeautifulSoup(response.text, "html.parser")
+    table = soup.find("table", id="rb")
+    rows = table.find_all("tr")[2:]
+
+    # Get the current date and time
+    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Initialize lists to store data
+    bank_names, dates, usd_buy, usd_sell, eur_buy, eur_sell, rub_buy, rub_sell, gbp_buy, gbp_sell = ([] for _ in range(10))
+
+    # Iterate through rows and extract data
     for row in rows:
-        bank = row.xpath('td[2]//text()').extract()[1]
-        date = row.xpath('td[5]//text()').extract()[0]
-        date_list = date.split(' ')
-        new_date = '{0}-{1}-{2} {3}:00'.format(today.year, date_map[date_list[1][:-1]], date_list[0], date_list[2])
-        usd_sell = ''.join(row.xpath('td[6]//text()').extract())
-        usd_buy = ''.join(row.xpath('td[7]//text()').extract())
-        eur_sell = ''.join(row.xpath('td[8]//text()').extract())
-        eur_buy = ''.join(row.xpath('td[9]//text()').extract()[0])
-        rub_sell = ''.join(row.xpath('td[10]//text()').extract())
-        rub_buy = ''.join(row.xpath('td[11]//text()').extract())
-        gbp_sell = ''.join(row.xpath('td[12]//text()').extract())
-        gbp_buy = ''.join(row.xpath('td[13]//text()').extract())
-        csv += '{0},{1},{2},{3},{4},{5},{6},{7},{8},{9}\n'.format(bank, new_date, usd_sell, usd_buy, eur_sell, eur_buy,
-                                                                  rub_sell, rub_buy, gbp_sell, gbp_buy)
-    df = pd.read_csv(io.StringIO(csv),
-                     dtype={'bank': str, 'usd_sell': float, 'usd_buy': float, 'eur_sell': float, 'eur_buy': float,
-                            'rub_sell': float, 'rub_buy': float, 'gbp_sell': float, 'gbp_buy': float},
-                     parse_dates=['date'])
-    print(df.dtypes)
-    print(df['usd_buy'].mean())
-    print(df.head(18))
-    print('updated lambda function')
+        columns = row.find_all("td")
+
+        # Check if there are enough columns to extract data
+        if len(columns) >= 13:
+            bank_name_elem = columns[1].find("a")
+
+            if bank_name_elem:
+                bank_name = bank_name_elem.text
+                date_str = parse_and_convert_date(columns[4].text)
+                usd_sell_rate = convert_to_float(columns[5].text)
+                usd_buy_rate = convert_to_float(columns[6].text)
+                eur_sell_rate = convert_to_float(columns[7].text)
+                eur_buy_rate = convert_to_float(columns[8].text)
+                rub_sell_rate = convert_to_float(columns[9].text)
+                rub_buy_rate = convert_to_float(columns[10].text)
+                gbp_sell_rate = convert_to_float(columns[11].text)
+                gbp_buy_rate = convert_to_float(columns[12].text)
+
+                # Append data to lists
+                bank_names.append(bank_name)
+                dates.append(date_str)
+                usd_buy.append(usd_buy_rate)
+                usd_sell.append(usd_sell_rate)
+                eur_buy.append(eur_buy_rate)
+                eur_sell.append(eur_sell_rate)
+                rub_buy.append(rub_buy_rate)
+                rub_sell.append(rub_sell_rate)
+                gbp_buy.append(gbp_buy_rate)
+                gbp_sell.append(gbp_sell_rate)
+
+    # Create a DataFrame
+    data = {
+        "bank": bank_names,
+        "date": dates,
+        "usd_buy": usd_buy,
+        "usd_sell": usd_sell,
+        "eur_buy": eur_buy,
+        "eur_sell": eur_sell,
+        "rub_buy": rub_buy,
+        "rub_sell": rub_sell,
+        "gbp_buy": gbp_buy,
+        "gbp_sell": gbp_sell
+    }
+
+    df = pd.DataFrame(data)
+    
+    # Upload DataFrame to S3
+    bucket_name = os.environ.get('RATES_BUCKET')
+    csv_buffer = StringIO()
+    df.to_csv(csv_buffer, index=False)
+    s3_resource = boto3.resource('s3')
+    object_key = generate_s3_key()
+    s3_resource.Object(bucket_name, object_key).put(Body=csv_buffer.getvalue())

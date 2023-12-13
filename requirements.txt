@@ -1,2 +1,4 @@
-scrapy
 pandas
+requests
+bs4
+boto3
