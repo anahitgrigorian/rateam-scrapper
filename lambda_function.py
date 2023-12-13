@@ -85,6 +85,8 @@ def lambda_handler(event,context):
     }
 
     df = pd.DataFrame(data)
+
+    print(df.head(10))
     
     # Upload DataFrame to S3
     bucket_name = os.environ.get('RATES_BUCKET')
