@@ -30,6 +30,26 @@ Resources:
                   - s3:PutObjectAcl
                 Resource: !Sub "arn:aws:s3:::${BucketName}/*"
 
+  RateAMEventBridgeRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: RateAMEventBridgeRuleRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt RateAMScrapper.Arn
+
   RateAMEventBridgeRule:
     Type: AWS::Events::Rule
     Properties:
@@ -38,6 +58,7 @@ Resources:
       Targets:
         - Arn: !GetAtt RateAMScrapper.Arn
           Id: RateAMScrapper
+      RoleArn: !GetAtt RateAMEventBridgeRuleRole.Arn
 
   RateAMScrapper:
     Type: AWS::Serverless::Function
