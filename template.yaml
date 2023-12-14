@@ -60,6 +60,14 @@ Resources:
           Id: RateAMScrapper
       RoleArn: !GetAtt RateAMEventBridgeRuleRole.Arn
 
+  RateAMPermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref RateAMScrapper
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt RateAMEventBridgeRule.Arn
+
   RateAMScrapper:
     Type: AWS::Serverless::Function
     Properties:
