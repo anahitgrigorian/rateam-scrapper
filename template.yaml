@@ -54,7 +54,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: RateAMEventBridgeRule
-      ScheduleExpression: "rate(6 hours)"
+      ScheduleExpression: "rate(30 minutes)"
       Targets:
         - Arn: !GetAtt RateAMScrapper.Arn
           Id: RateAMScrapper
